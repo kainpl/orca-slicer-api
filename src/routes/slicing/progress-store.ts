@@ -34,7 +34,7 @@ export interface SliceProgress {
 }
 
 // Grace window kept after `finish()` so a poll that just missed the slice
-// completion still sees the terminal frame instead of a 404. Bambuddy
+// completion still sees the terminal frame instead of a 404. BamDude
 // polls every 1s; 30s is plenty.
 const FINISH_GRACE_MS = 30_000;
 
