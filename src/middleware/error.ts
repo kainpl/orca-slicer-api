@@ -117,7 +117,7 @@ export function errorHandler(
   }
 
   // Include `causeMessage` (the underlying CLI stderr / wrapped error) as
-  // `details` in the response. Bambuddy reads this field to surface the
+  // `details` in the response. BamDude reads this field to surface the
   // actual slice-rejection reason in its own log instead of the generic
   // top-level `Failed to slice the model`. Without it, every CLI failure
   // looks the same on the calling side and the embedded-settings fallback

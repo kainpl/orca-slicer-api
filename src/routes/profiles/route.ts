@@ -32,7 +32,7 @@ const router = Router();
 type BundledFilament = {
   name: string;
   base_id: string | null;
-  // Filament-only metadata. Bambuddy uses these to pre-pick a profile per
+  // Filament-only metadata. BamDude uses these to pre-pick a profile per
   // plate slot in the SliceModal multi-color flow. Bundled BBL profiles
   // commonly carry `filament_type` on the leaf preset; `filament_colour` is
   // typically missing on bundled profiles (color is a runtime spool attribute,
@@ -51,7 +51,7 @@ let bundledIndexCachedAt = 0;
 const BUNDLED_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
 
 router.get("/bundled", async (_req, res) => {
-  // Bambuddy SliceModal calls this to populate the "Standard" tier of profile
+  // BamDude SliceModal calls this to populate the "Standard" tier of profile
   // dropdowns. Empty arrays are returned (200, not 503) when the bundled tree
   // can't be located — callers degrade to "no standard tier" without surfacing
   // a confusing error.

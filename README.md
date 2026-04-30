@@ -60,12 +60,12 @@ A `docker-compose.yml` is included for convenience. It defines two services:
 
 | Service | Host port | Image source |
 |---|---|---|
-| `orca-slicer-api` | **3003** | Built locally from this repo's `Dockerfile` (default profile, carries the `bambuddy/profile-resolver` patches — see below) |
+| `orca-slicer-api` | **3003** | Built locally from this repo's `Dockerfile` (default profile, carries the `bamdude/profile-resolver` patches — see below) |
 | `bambu-studio-api` | **3001** | Built locally from `Dockerfile.bambu-studio` (gated behind `bambu` profile) |
 
-Ports 3000 and 3002 are reserved by Bambuddy's virtual-printer feature, so
+Ports 3000 and 3002 are reserved by BamDude's virtual-printer feature, so
 the OrcaSlicer sidecar sits on 3003. Override either host port via
-`ORCA_API_PORT` / `BAMBU_API_PORT` in your `.env` if you don't run Bambuddy
+`ORCA_API_PORT` / `BAMBU_API_PORT` in your `.env` if you don't run BamDude
 on the same host.
 
 ```bash

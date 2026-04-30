@@ -232,8 +232,8 @@ export async function sliceModel(
   // wrapper. The CLI prints the *reason* it rejected an input (range checks,
   // missing fields, profile compat failures) to stderr; we keep both streams
   // around so we can include them in the AppError that propagates to
-  // Bambuddy. We also wire up `--pipe` to a per-request FIFO so the slicer's
-  // structured JSON progress events land in the ProgressStore — Bambuddy
+  // BamDude. We also wire up `--pipe` to a per-request FIFO so the slicer's
+  // structured JSON progress events land in the ProgressStore — BamDude
   // polls /slice/progress/:requestId in parallel with this call to drive
   // a live progress toast.
   let cliStdout = "";

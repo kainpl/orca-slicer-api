@@ -7,7 +7,7 @@
 #
 # Build:
 #   docker build -f Dockerfile.bambu-studio --build-arg BAMBU_VERSION=02.07.01.62 \
-#                -t ghcr.io/maziggy/bambu-studio-api:latest .
+#                -t ghcr.io/kainpl/bambu-studio-api:latest .
 #
 # AMD64 only — BambuStudio doesn't publish an official ARM64 AppImage.
 #

@@ -19,7 +19,7 @@ import {
 
 const router = Router();
 
-// Live progress endpoint. Bambuddy generates a request_id when it submits
+// Live progress endpoint. BamDude generates a request_id when it submits
 // to POST /slice and polls this in parallel (the POST holds the
 // connection open for the duration of the slice — multi-second to
 // multi-minute on complex models — so the only way to surface progress
