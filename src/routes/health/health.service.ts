@@ -39,8 +39,10 @@ export async function checkHealth(): Promise<HealthCheck> {
         timeout: 5000,
       });
 
-      // Extract version from output like "OrcaSlicer-2.3.1:" or "OrcaSlicer-01.10.01.50:"
-      const versionMatch = helpOutput.match(/OrcaSlicer-([\d.]+)/);
+      // Extract version from output like "OrcaSlicer-2.3.1:", "OrcaSlicer-01.10.01.50:",
+      // or "BambuStudio-02.06.00.51:" — same Node service drives both binaries
+      // in BamDude's compose stack, so both prefixes need to match.
+      const versionMatch = helpOutput.match(/(?:OrcaSlicer|BambuStudio)-([\d.]+)/);
       const version = versionMatch ? versionMatch[1] : "unknown";
       
       checks.orcaslicer.available = true;
