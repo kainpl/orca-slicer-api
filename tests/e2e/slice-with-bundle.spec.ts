@@ -56,7 +56,7 @@ describe("Slicing - bundle selector path", () => {
     const bundleId: string = upload.body.id;
 
     // 2. Slice Cube.stl picking from the bundle by name. Mirrors what
-    //    Bambuddy's SliceModal will eventually send.
+    //    BamDude's SliceModal will eventually send.
     const stlPath = path.join(__dirname, "../files/input/Cube.stl");
     const stlBuffer = fsSync.readFileSync(stlPath);
 
