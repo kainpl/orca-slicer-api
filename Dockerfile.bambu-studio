@@ -65,7 +65,7 @@ FROM ubuntu:22.04
 #
 # Symptom of getting this wrong: the CLI exits 127 at startup with
 # `error while loading shared libraries: libwebkit2gtk-4.1.so.0`, every
-# `/slice` call returns 500, and Bambuddy's preview-slice falls through
+# `/slice` call returns 500, and BamDude's preview-slice falls through
 # to "all filaments required" in the SliceModal.
 RUN apt-get update \
     && apt-get upgrade -y \
