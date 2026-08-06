@@ -140,3 +140,6 @@ dist
 .DS_Store
 
 data/
+
+# IDE / editor project files
+.idea/
