@@ -50,7 +50,7 @@ If you want to build the image locally instead use:
 ```bash
 git clone https://github.com/AFKFelix/orca-slicer-api.git
 cd orca-slicer-api
-docker build --build-arg ORCA_VERSION=2.4.2 -t orca-slicer-api .
+docker build --build-arg ORCA_VERSION=2.5.0 -t orca-slicer-api .
 docker run -d -p 3000:3000 --name orca-slicer-api orca-slicer-api
 ```
 
@@ -82,17 +82,23 @@ curl http://localhost:3001/health
 `Dockerfile.bambu-studio` reuses the same Node wrapper as the OrcaSlicer
 image — BambuStudio's CLI accepts the same `--load-settings` / `--slice`
 flags, so only the bundled AppImage and a few env vars differ. Pin the
-BambuStudio version with `BAMBU_VERSION=02.08.02.61 docker compose ...`
+BambuStudio version with `BAMBU_VERSION=02.09.01.70 docker compose ...`
 (Ubuntu 22.04 AppImage variant — Fedora was dropped upstream after v02.06.x).
 
-> **Slicing Bambu-authored 3MFs?** OrcaSlicer still has known CLI bugs
-> that block slicing many Bambu-authored 3MFs, 2.4.2 included — see
+OrcaSlicer 2.5.0 ships its presets as binary `.opc` caches. The Orca image
+also fetches the BBL JSON profiles from the same `v${ORCA_VERSION}` source
+tag for the API's inheritance resolver, keeping the CLI's caches intact.
+Both production and test images use this separate profile directory.
+
+> **Slicing Bambu-authored 3MFs?** OrcaSlicer 2.4.2 had CLI bugs
+> that blocked slicing many Bambu-authored 3MFs — see
 > upstream [OrcaSlicer#12426](https://github.com/SoftFever/OrcaSlicer/issues/12426)
 > (segfault on painted multi-extruder files) and
 > [OrcaSlicer#13386](https://github.com/SoftFever/OrcaSlicer/issues/13386)
-> (parameter-range strict-validation reject). #12426 is still open and its
-> fix PR (#13774) was closed without merging, so a newer OrcaSlicer does not
-> resolve it. Bambu Studio is recommended — the `bambu-studio-api` service
+> (parameter-range strict-validation reject). The 2.5.0 image passes our
+> STL/3MF and profile-resolution checks, but the two Bambu-specific H2D
+> bundle slicing cases remain excluded from the Orca test run; those cases
+> are not certified by this update. Bambu Studio is recommended — the `bambu-studio-api` service
 > above is a drop-in replacement with the same API surface.
 
 ### Local (Development)

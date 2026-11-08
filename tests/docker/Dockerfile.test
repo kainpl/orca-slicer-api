@@ -1,12 +1,12 @@
 FROM ubuntu:24.04
 
-ARG ORCA_VERSION=2.4.2
+ARG ORCA_VERSION=2.5.0
 WORKDIR /app
 
 RUN apt-get update \
 	&& apt-get upgrade -y \
 	&& apt-get install -y --no-install-recommends \
-	curl ca-certificates gnupg \
+	curl ca-certificates gnupg git \
 	&& mkdir -p /etc/apt/keyrings \
 	&& curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
 	&& echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
@@ -21,11 +21,22 @@ RUN apt-get update \
 	&& update-ca-certificates \
 	&& rm -rf /var/lib/apt/lists/*
 
-RUN echo "Downloading AMD64 AppImage from SoftFever/OrcaSlicer..."; \
-	curl -o orca.AppImage -L "https://github.com/SoftFever/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage"; \
+RUN set -eu; echo "Downloading AMD64 AppImage from OrcaSlicer/OrcaSlicer..."; \
+	curl -fL -o orca.AppImage "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage"; \
 	chmod +x orca.AppImage; \
 	./orca.AppImage --appimage-extract; \
-	rm orca.AppImage; 
+	rm orca.AppImage
+
+# Match production: the CLI ships .opc caches, but the API resolves JSON.
+RUN set -eu; \
+    git clone --depth 1 --filter=blob:none --sparse --branch "v${ORCA_VERSION}" \
+        https://github.com/OrcaSlicer/OrcaSlicer.git /tmp/orca-source; \
+    git -C /tmp/orca-source sparse-checkout set resources/profiles/BBL; \
+    mkdir -p /app/bundled-profiles; \
+    cp /tmp/orca-source/resources/profiles/BBL.json /app/bundled-profiles/; \
+    cp -r /tmp/orca-source/resources/profiles/BBL /app/bundled-profiles/; \
+    test -s /app/bundled-profiles/BBL/machine/fdm_machine_common.json; \
+    rm -rf /tmp/orca-source
 
 COPY package*.json ./
 
@@ -36,6 +47,7 @@ COPY tests ./
 
 ENV PORT=3000
 ENV ORCASLICER_PATH=/app/squashfs-root/AppRun
+ENV BUNDLED_PROFILES_PATH=/app/bundled-profiles/BBL
 ENV DATA_PATH=/app/data
 ENV NODE_ENV=test
 # Which slicer this image wraps. The wrapper itself is slicer-agnostic;

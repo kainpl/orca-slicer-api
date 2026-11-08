@@ -1,26 +1,34 @@
 FROM node:22-bookworm AS build
 
-ARG ORCA_VERSION=2.4.2
+ARG ORCA_VERSION=2.5.0
 ARG TARGETARCH
 
 WORKDIR /app
 
-# Download OrcaSlicer based on architecture
-# AMD64: Use official AppImage from SoftFever/OrcaSlicer
-# ARM64: Use custom-built AppImage from kldzj/orca-slicer-arm64
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-	echo "Downloading ARM64 AppImage from kldzj/orca-slicer-arm64..."; \
-	curl -o orca.AppImage -L "https://github.com/kldzj/orca-slicer-arm64/releases/download/v${ORCA_VERSION}-arm64/OrcaSlicer-${ORCA_VERSION}-arm64-linux.AppImage"; \
-	chmod +x orca.AppImage; \
-	./orca.AppImage --appimage-extract; \
-	rm orca.AppImage; \
-	else \
-	echo "Downloading AMD64 AppImage from SoftFever/OrcaSlicer..."; \
-	curl -o orca.AppImage -L "https://github.com/SoftFever/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage"; \
-	chmod +x orca.AppImage; \
-	./orca.AppImage --appimage-extract; \
-	rm orca.AppImage; \
-	fi
+# OrcaSlicer publishes official Ubuntu 24.04 AppImages for both architectures.
+RUN set -eu; \
+    case "$TARGETARCH" in \
+        amd64) ARCH_SUFFIX="" ;; \
+        arm64) ARCH_SUFFIX="_aarch64" ;; \
+        *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fL -o orca.AppImage "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404${ARCH_SUFFIX}_V${ORCA_VERSION}.AppImage"; \
+    chmod +x orca.AppImage; \
+    ./orca.AppImage --appimage-extract; \
+    rm orca.AppImage
+
+# Orca 2.5+ ships packed .opc caches instead of preset JSON. The wrapper's
+# inheritance resolver needs the JSON from the SAME release, separately from
+# the CLI's untouched cache. Sparse checkout avoids downloading other vendors.
+RUN set -eu; \
+    git clone --depth 1 --filter=blob:none --sparse --branch "v${ORCA_VERSION}" \
+        https://github.com/OrcaSlicer/OrcaSlicer.git /tmp/orca-source; \
+    git -C /tmp/orca-source sparse-checkout set resources/profiles/BBL; \
+    mkdir -p /app/bundled-profiles; \
+    cp /tmp/orca-source/resources/profiles/BBL.json /app/bundled-profiles/; \
+    cp -r /tmp/orca-source/resources/profiles/BBL /app/bundled-profiles/; \
+    test -s /app/bundled-profiles/BBL/machine/fdm_machine_common.json; \
+    rm -rf /tmp/orca-source
 
 COPY package*.json ./
 
@@ -54,9 +62,11 @@ RUN apt-get update \
 COPY --from=build /app/dist/src /app/dist
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/squashfs-root /app/squashfs-root
+COPY --from=build /app/bundled-profiles /app/bundled-profiles
 
 ENV PORT=3000
 ENV ORCASLICER_PATH=/app/squashfs-root/AppRun
+ENV BUNDLED_PROFILES_PATH=/app/bundled-profiles/BBL
 ENV DATA_PATH=/app/data
 ENV NODE_ENV=production
 # Which slicer this image wraps. The wrapper itself is slicer-agnostic;
