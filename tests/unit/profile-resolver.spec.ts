@@ -233,22 +233,20 @@ describe("resolveProfile", () => {
     expect(result.top_shell_layers).toBe("3");
   });
 
-  it("drops a dangling inherits when the parent file is missing", async () => {
-    // Mirrors how upstream's own test fixtures (with stale references like
-    // `fdm_process_bbl_0.20`) work today: the CLI ignores unresolvable
-    // inherits names from --load-settings, so the resolver does the same.
+  it("refuses a dangling inherits when the parent file is missing", async () => {
+    // Was "drops": the CLI ignores an unresolvable inherits name from
+    // --load-settings, and the resolver did the same -- which let the slice
+    // run on the CLI's defaults for everything the preset did not state.
+    // See tests/unit/preset-unresolved.spec.ts for the refusal itself.
     const input: ProfileJson = {
       type: "machine",
       name: "self-contained",
       inherits: "Definitely Does Not Exist Preset",
       gcode_flavor: "klipper",
     };
-    const result = await resolveProfile(input, "machine", {
-      bundledProfilesPath,
-    });
-    expect(result.inherits).toBeUndefined();
-    expect(result.name).toBe("self-contained");
-    expect(result.gcode_flavor).toBe("klipper");
+    await expect(
+      resolveProfile(input, "machine", { bundledProfilesPath }),
+    ).rejects.toMatchObject({ status: 422, code: "preset_unresolved" });
   });
 
   it("throws AppError on a malformed JSON parent", async () => {
@@ -609,14 +607,15 @@ describe("resolveProfile with companion templates", () => {
     ).rejects.toThrow(/template is not valid JSON/);
   });
 
-  it("resolves normally when the category has no bundled directory", async () => {
-    const result = await resolveProfile(
-      { type: "process", name: "p", inherits: "nothing_here" },
-      "process",
-      { bundledProfilesPath },
-    );
-
-    expect(result.name).toBe("p");
-    expect(result.inherits).toBeUndefined();
+  it("reads a category with no bundled directory as having no presets", async () => {
+    // No directory means no companions and no parents: the index is empty
+    // rather than an error, and a parent asked of it is simply not found.
+    await expect(
+      resolveProfile(
+        { type: "process", name: "p", inherits: "nothing_here" },
+        "process",
+        { bundledProfilesPath },
+      ),
+    ).rejects.toMatchObject({ status: 422, code: "preset_unresolved" });
   });
 });

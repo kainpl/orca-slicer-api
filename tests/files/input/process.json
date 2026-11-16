@@ -1,7 +1,6 @@
 {
   "type": "process",
   "name": "0.20mm Standard @BBL X1C",
-  "inherits": "fdm_process_bbl_0.20",
   "from": "system",
   "curr_bed_type": "Textured PEI Plate",
   "setting_id": "GP004",
@@ -32,7 +31,6 @@
   "bottom_shell_thickness": "0",
   "bridge_speed": "50",
   "brim_object_gap": "0.1",
-  "compatible_printers_condition": "",
   "draft_shield": "disabled",
   "enable_arc_fitting": "1",
   "outer_wall_acceleration": "5000",
@@ -101,7 +99,6 @@
   "interface_shells": "0",
   "wall_loops": "2",
   "inner_wall_line_width": "0.45",
-  "print_settings_id": "",
   "raft_layers": "0",
   "skirt_distance": "2",
   "spiral_mode": "0",

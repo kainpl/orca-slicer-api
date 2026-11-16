@@ -189,9 +189,9 @@ export type BundledProfile = Record<string, unknown> & {
 };
 
 // A profile that inherits from a missing parent ends the walk with whatever it
-// has. 32 of the shipped BBL filament profiles do exactly that -- their
-// `inherits` names a file the bundle does not contain -- so this has to be a
-// silent stop, the same way the slicing resolver treats a dangling `inherits`.
+// has: a LISTING must not fail because one preset is incomplete (32 BBL
+// filament profiles of OrcaSlicer 2.4.2 named a parent outside the bundle).
+// Slicing with such a preset is another matter -- the resolver refuses it.
 const MAX_INHERITS_DEPTH = 12;
 
 /**

@@ -9,11 +9,23 @@ import {
 export class AppError extends Error {
   status: number = 500;
   causeMessage?: string;
+  // A refusal a caller is meant to REACT to, not only show: `code` goes out
+  // as `error` and `fields` beside it, so nobody has to parse `message`.
+  code?: string;
+  fields?: Record<string, string | null>;
 
-  constructor(status: number, message: string, causeMessage?: string) {
+  constructor(
+    status: number,
+    message: string,
+    causeMessage?: string,
+    code?: string,
+    fields?: Record<string, string | null>,
+  ) {
     super(message);
     this.status = status;
     this.causeMessage = causeMessage;
+    this.code = code;
+    this.fields = fields;
   }
 }
 
@@ -122,9 +134,14 @@ export function errorHandler(
   // top-level `Failed to slice the model`. Without it, every CLI failure
   // looks the same on the calling side and the embedded-settings fallback
   // hides the real cause.
-  const body: { message: string; details?: string } = { message: err.message };
+  const body: Record<string, string | null> = { message: err.message };
   if (err.causeMessage) {
     body.details = err.causeMessage;
+  }
+  if (err.code) {
+    // `message` and `details` keep their meaning for callers that only know
+    // those two; the code and its fields are additions beside them.
+    Object.assign(body, err.fields, { error: err.code });
   }
   res.status(status).json(body);
 }

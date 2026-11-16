@@ -52,19 +52,60 @@ const TEMPLATE_IDENTITY_KEYS = new Set([
   "from",
 ]);
 
+/** `error` of the refusal for a preset whose `inherits` chain is broken. */
+export const PRESET_UNRESOLVED = "preset_unresolved";
+
+/**
+ * The refusal for a preset whose chain names a parent this slicer does not
+ * have — the preset's own parent or one further up.
+ *
+ * 422, not 500: nothing is broken here, the caller named a preset this
+ * image's profile tree cannot complete. `preset` is the name the caller's
+ * profile carries (null when it has none) and `missing_parent` the link that
+ * was not found; for the stub of a stock preset the two are the same name.
+ */
+export function presetUnresolved(
+  category: ProfileCategory,
+  preset: string | null,
+  missingParent: string,
+): AppError {
+  const message =
+    preset === null || preset === missingParent
+      ? `Preset "${missingParent}" is not among this slicer's ${category} profiles`
+      : `Preset "${preset}" cannot be resolved: its parent "${missingParent}" is not among this slicer's ${category} profiles`;
+  return new AppError(
+    422,
+    message,
+    "Nothing was sliced: without the parent the slicer would fill every setting " +
+      "the preset does not state itself with its built-in defaults.",
+    PRESET_UNRESOLVED,
+    { category, preset, missing_parent: missingParent },
+  );
+}
+
 // `--load-settings` does not run the GUI's preset-registry resolver.
 // Required fields like layer_change_gcode live on parent templates
 // (fdm_machine_common etc.) that the CLI will NOT pull in implicitly.
 // The resolver therefore walks the chain fully — to the root — and emits
-// a flat profile with everything baked in. Dangling inherits values that
-// don't map to a bundled file are dropped silently (matches how upstream
-// fixtures with stale `fdm_process_bbl_0.20` inherits work today).
+// a flat profile with everything baked in.
+//
+// A parent that is not in the tree REFUSES the request (`presetUnresolved`).
+// It used to be dropped silently, on the reasoning that the CLI ignores an
+// unresolvable `inherits` too. It does — and then slices on its compiled-in
+// defaults and reports success: a PETG preset whose parent this image
+// predates came back as PLA at 200 C, a preset with "/" in its name sliced
+// on defaults for every printer. A profile that is complete in itself must
+// not carry an `inherits` it does not need.
 export async function resolveProfile(
   profile: ProfileJson,
   category: ProfileCategory,
   options: ResolveOptions,
 ): Promise<ProfileJson> {
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const presetName =
+    typeof profile.name === "string" && profile.name.length > 0
+      ? profile.name
+      : null;
   let current: ProfileJson = { ...profile };
   stripUserSentinels(current);
   let depth = 0;
@@ -105,8 +146,7 @@ export async function resolveProfile(
           `category=${category} path=${path.join(index.dir, broken.rel)} ${broken.error}`,
         );
       }
-      delete current.inherits;
-      break;
+      throw presetUnresolved(category, presetName, parentName);
     }
 
     // A copy: the index hands out the one parsed object every resolution

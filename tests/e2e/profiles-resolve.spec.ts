@@ -110,20 +110,24 @@ describe("POST /profiles/resolve", () => {
     expect(res.body.profile).toMatchObject(flat);
   });
 
-  it("drops an inherits that names no bundled file rather than failing", async () => {
-    // Matches the resolver's existing behaviour for stale inherits values;
-    // a preset referencing a profile this image doesn't ship should still
-    // yield whatever the caller supplied.
+  it("refuses an inherits that names no bundled preset", async () => {
+    // Was "drops ... rather than failing". A preset referencing a profile
+    // this image doesn't ship would be sliced on the CLI's defaults for
+    // everything it does not state itself, so the caller is told instead.
     const res = await request
       .post("/profiles/resolve")
       .send({
         category: "process",
-        profile: { inherits: "no_such_parent", wall_loops: "4" },
+        profile: { name: "mine", inherits: "no_such_parent", wall_loops: "4" },
       })
-      .expect(200);
+      .expect(422);
 
-    expect(res.body.profile.wall_loops).toBe("4");
-    expect(res.body.profile.inherits).toBeUndefined();
+    expect(res.body).toMatchObject({
+      error: "preset_unresolved",
+      category: "process",
+      preset: "mine",
+      missing_parent: "no_such_parent",
+    });
   });
 
   it("rejects the storage category names", async () => {
