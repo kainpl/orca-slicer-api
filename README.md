@@ -171,6 +171,15 @@ This service includes a profile resolver that addresses all four:
 
 The resolver runs automatically on every uploaded or stored profile that has an `inherits:` field. To use this in a custom deployment, ensure either `BUNDLED_PROFILES_PATH` is set or `ORCASLICER_PATH` points at an OrcaSlicer install whose `resources/profiles/BBL/` directory is present alongside it. The published Docker image satisfies this automatically.
 
+## Wrapper version
+
+`GET /health` reports `sidecarVersion` beside the slicer's own version
+(`checks.orcaslicer.version`). It is the version of this wrapper's code — a
+whole number in `src/version.ts`, raised by hand whenever something a caller
+can depend on is added or changed, with a line there saying what. A caller
+that needs a behaviour compares it with the number it needs; an image that
+reports none predates it and counts as older.
+
 ## Security
 
 **WARNING**: No authentication or authorization is implemented. This service should never be exposed directly to the public internet without adding proper security layers.

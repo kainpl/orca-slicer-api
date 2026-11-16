@@ -1,10 +1,14 @@
 import { execFileSync } from "child_process";
 import { promises as fs } from "fs";
 import * as path from "path";
+import { SIDECAR_VERSION } from "../../version";
 
 export interface HealthCheck {
   status: "healthy" | "unhealthy";
   timestamp: string;
+  // This wrapper's code version (src/version.ts). The slicer's own version
+  // is `checks.orcaslicer.version`.
+  sidecarVersion: number;
   checks: {
     orcaslicer: {
       available: boolean;
@@ -95,6 +99,7 @@ export async function checkHealth(): Promise<HealthCheck> {
   return {
     status,
     timestamp,
+    sidecarVersion: SIDECAR_VERSION,
     checks,
   };
 }
