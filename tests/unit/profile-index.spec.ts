@@ -222,6 +222,24 @@ describe("the index is built once per profile root", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("is built once for requests that arrive together on a cold start", async () => {
+    // The built index was cached, the build was not: N first requests each
+    // parsed the whole category (a couple of thousand files in a real image).
+    const dir = path.join(root, "filament");
+    const read = vi.spyOn(fs, "readFile");
+    const indexes = await Promise.all([
+      loadCategoryIndex(dir),
+      loadCategoryIndex(dir),
+      loadCategoryIndex(dir),
+    ]);
+    const files = new Set(read.mock.calls.map((call) => String(call[0])));
+    expect(read.mock.calls.length).toBe(files.size);
+    expect(files.size).toBeGreaterThan(0);
+    expect(indexes[1]).toBe(indexes[0]);
+    expect(indexes[2]).toBe(indexes[0]);
+    read.mockRestore();
+  });
+
   it("is rebuilt when a file appears in the tree", async () => {
     await resolveFilament({ name: "a", inherits: "Bambu PLA Basic @BBL X1C" });
     await put("filament/New/Late PLA.json", {

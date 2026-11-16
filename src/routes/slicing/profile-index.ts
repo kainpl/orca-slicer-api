@@ -78,10 +78,16 @@ const JSON_EXT = ".json";
 
 type CacheEntry = { listing: string; index: CategoryIndex };
 const cache = new Map<string, CacheEntry>();
+// Builds in progress, by folder, for the listing they were started from.
+const building = new Map<
+  string,
+  { listing: string; index: Promise<CategoryIndex> }
+>();
 
 /** Forget every index. For tests that rewrite a file in place. */
 export function clearProfileIndexCache(): void {
   cache.clear();
+  building.clear();
 }
 
 /**
@@ -104,9 +110,24 @@ export async function loadCategoryIndex(dir: string): Promise<CategoryIndex> {
   if (cached && cached.listing === listing) {
     return cached.index;
   }
-  const index = await buildIndex(dir, files);
-  cache.set(dir, { listing, index });
-  return index;
+  // Single flight: requests that arrive together on a cold start share one
+  // build instead of each parsing the whole category.
+  const flying = building.get(dir);
+  if (flying && flying.listing === listing) {
+    return flying.index;
+  }
+  const build = buildIndex(dir, files);
+  const flight = { listing, index: build };
+  building.set(dir, flight);
+  try {
+    const index = await build;
+    cache.set(dir, { listing, index });
+    return index;
+  } finally {
+    if (building.get(dir) === flight) {
+      building.delete(dir);
+    }
+  }
 }
 
 /**
