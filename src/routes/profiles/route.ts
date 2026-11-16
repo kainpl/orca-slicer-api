@@ -1,5 +1,4 @@
 import { Router } from "express";
-import fs from "node:fs";
 import path from "node:path";
 import { uploadJson, uploadBundle } from "../../middleware/upload";
 import type { Category } from "../slicing/models";
@@ -22,13 +21,15 @@ import {
   type ProfileCategory,
   type ProfileJson,
 } from "../slicing/profile-resolver";
+import { loadCategoryIndex } from "../slicing/profile-index";
 
 const router = Router();
 
-// In-process cache for the bundled-profiles index. The bundle is read from the
-// slicer's read-only `resources/profiles/BBL/` tree, which only changes when
-// the container image is rebuilt — a long TTL is safe and avoids re-reading
-// hundreds of JSON files on every Slice modal open. `null` = "not yet built".
+// In-process cache for the bundled-profiles listing. The bundle is read from
+// the slicer's read-only `resources/profiles/BBL/` tree, which only changes
+// when the container image is rebuilt — a long TTL is safe and avoids
+// rebuilding the listing on every Slice modal open. `null` = "not yet built".
+// (The parsed files themselves are held by profile-index.ts.)
 export type BundledEntry = {
   name: string;
   base_id: string | null;
@@ -108,7 +109,14 @@ router.get("/bundled", async (_req, res) => {
 });
 
 /**
- * Index one category directory of a bundled-profile tree.
+ * List one category directory of a bundled-profile tree, subfolders included.
+ *
+ * Brands keep their presets in a folder of their own (`filament/P1P/`,
+ * `filament/Polymaker/`, `filament/SUNLU/`), and a preset is listed under the
+ * `name` its file states — which is not always the file's name: a "/" in a
+ * name is stored as "-". Both come from the shared index (profile-index.ts),
+ * the same one the slicing resolver looks parents up in, so whatever is
+ * offered here can be resolved there. A name two files claim is not offered.
  *
  * Exported for unit tests: the inherited-field resolution below is the only
  * reason a P1S sees any process preset at all, and it is worth pinning against
@@ -119,31 +127,14 @@ export async function readBundledDir(
   dir: string,
   kind: "printer" | "process" | "filament",
 ): Promise<BundledEntry[]> {
-  if (!fs.existsSync(dir)) return [];
-  let entries: string[];
-  try {
-    entries = await fs.promises.readdir(dir);
-  } catch {
-    return [];
-  }
-
-  // Read the whole directory up front, abstract bases included. The bases are
-  // never offered to the user, but they are where the inherited fields
-  // actually live, so the walk below needs them in hand.
+  // The whole tree, abstract bases included. The bases are never offered to
+  // the user, but they are where the inherited fields actually live, so the
+  // walk below needs them in hand. A corrupted or unreadable file is simply
+  // not in the index and does not break the rest of the listing.
+  const index = await loadCategoryIndex(dir);
   const byName = new Map<string, BundledProfile>();
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) continue;
-    try {
-      const raw = await fs.promises.readFile(path.join(dir, entry), "utf8");
-      const json = JSON.parse(raw) as BundledProfile;
-      if (typeof json.name === "string" && json.name.length > 0) {
-        byName.set(json.name, json);
-      }
-    } catch {
-      // Corrupted / unreadable individual file — skip without breaking the
-      // rest of the listing.
-      continue;
-    }
+  for (const [name, entry] of index.byName) {
+    byName.set(name, entry.json);
   }
 
   const out: BundledEntry[] = [];

@@ -1,6 +1,10 @@
-import { promises as fs } from "fs";
 import * as path from "path";
 import { AppError } from "../../middleware/error";
+import {
+  loadCategoryIndex,
+  lookupProfile,
+  type CategoryIndex,
+} from "./profile-index";
 
 export type ProfileCategory = "machine" | "process" | "filament";
 
@@ -35,8 +39,6 @@ const DEFAULT_MAX_DEPTH = 16;
 // macros and the `M1002 gcode_claim_action` calls, so a print sliced without
 // it heats the bed, moves the toolhead and extrudes nothing while reporting
 // no preparation stage (bambuddy#2838).
-const TEMPLATE_MARKER = " template ";
-
 // Copied from a companion only when the preset does not define the key
 // itself, so these identity fields never leak across. `name` would rename
 // the preset to "… template machine_start_gcode" and `instantiation: false`
@@ -49,8 +51,6 @@ const TEMPLATE_IDENTITY_KEYS = new Set([
   "type",
   "from",
 ]);
-
-type TemplateIndex = Map<string, string[]>;
 
 // `--load-settings` does not run the GUI's preset-registry resolver.
 // Required fields like layer_change_gcode live on parent templates
@@ -69,10 +69,12 @@ export async function resolveProfile(
   stripUserSentinels(current);
   let depth = 0;
 
-  // One listing for the whole walk rather than a probe per ancestor per
-  // candidate key — and it discovers the keys instead of hardcoding today's
-  // five, so a companion for a new setting in a future bundle is picked up.
-  const templates = await readTemplateIndex(
+  // One index for the whole walk: every ancestor is looked up by its NAME,
+  // wherever in the category's tree its file sits and whatever that file is
+  // called (see profile-index.ts). The same index lists the companions, and
+  // it discovers their keys instead of hardcoding today's five, so a
+  // companion for a new setting in a future bundle is picked up.
+  const index = await loadCategoryIndex(
     path.join(options.bundledProfilesPath, category),
   );
 
@@ -89,30 +91,27 @@ export async function resolveProfile(
     }
 
     const parentName = current.inherits;
-    const parentPath = path.join(
-      options.bundledProfilesPath,
-      category,
-      `${parentName}.json`,
-    );
-
-    let parentRaw: string;
-    try {
-      parentRaw = await fs.readFile(parentPath, "utf-8");
-    } catch {
+    // Throws for a name two files claim: see the duplicate rule in
+    // profile-index.ts.
+    const found = lookupProfile(index, parentName);
+    if (!found) {
+      // A broken file cannot say what it is called, so it is recognised by
+      // its file name — and reported, not passed over as a missing parent.
+      const broken = index.invalid.get(parentName);
+      if (broken) {
+        throw new AppError(
+          500,
+          `Bundled profile is not valid JSON: "${parentName}"`,
+          `category=${category} path=${path.join(index.dir, broken.rel)} ${broken.error}`,
+        );
+      }
       delete current.inherits;
       break;
     }
 
-    let parent: ProfileJson;
-    try {
-      parent = JSON.parse(parentRaw) as ProfileJson;
-    } catch (err) {
-      throw new AppError(
-        500,
-        `Bundled profile is not valid JSON: "${parentName}"`,
-        `category=${category} path=${parentPath} ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    // A copy: the index hands out the one parsed object every resolution
+    // shares, and the companions below are folded into it in place.
+    const parent: ProfileJson = { ...found.json };
 
     // Fold the companions into the ancestor *before* merging, so they carry
     // that ancestor's precedence: below anything a descendant or the user's
@@ -120,7 +119,7 @@ export async function resolveProfile(
     // provide. That ordering is what makes the generic
     // `fdm_machine_common` value lose to the model's real block, and what
     // lets a 0.6 nozzle preset inherit its 0.4 sibling's companion.
-    await applyCompanionTemplates(parent, parentName, category, options, templates);
+    applyCompanionTemplates(parent, parentName, category, index);
 
     current = mergeProfiles(parent, current);
     depth += 1;
@@ -147,49 +146,10 @@ export async function resolveProfile(
 }
 
 /**
- * Index the companion files in a bundled category by the preset they belong to.
- *
- * `Bambu Lab X2D 0.4 nozzle template machine_start_gcode.json` is indexed
- * under `Bambu Lab X2D 0.4 nozzle`. A missing directory yields an empty
- * index: a category with no bundled tree simply has no companions, which is
- * the same outcome the inherits walk already produces for it.
- */
-async function readTemplateIndex(dir: string): Promise<TemplateIndex> {
-  const index: TemplateIndex = new Map();
-
-  let entries: string[];
-  try {
-    entries = await fs.readdir(dir);
-  } catch {
-    return index;
-  }
-
-  for (const entry of entries) {
-    if (!entry.endsWith(".json")) {
-      continue;
-    }
-    const base = entry.slice(0, -".json".length);
-    // Last occurrence, so the owner keeps every earlier word: the marker is
-    // a separator before the setting key, not a token that can appear only
-    // once. Index 0 would mean a file named " template x.json" with no owner.
-    const marker = base.lastIndexOf(TEMPLATE_MARKER);
-    if (marker <= 0) {
-      continue;
-    }
-    const owner = base.slice(0, marker);
-    const existing = index.get(owner);
-    if (existing) {
-      existing.push(base);
-    } else {
-      index.set(owner, [base]);
-    }
-  }
-
-  return index;
-}
-
-/**
  * Merge `name`'s companion files into `profile`, in place.
+ *
+ * `Bambu Lab X2D 0.4 nozzle template machine_start_gcode.json` belongs to
+ * `Bambu Lab X2D 0.4 nozzle` (profile-index.ts keys companions by owner).
  *
  * A companion only fills a key the preset's own file leaves unset. No preset
  * in the bundle both defines one of these settings inline and ships a
@@ -197,45 +157,25 @@ async function readTemplateIndex(dir: string): Promise<TemplateIndex> {
  * an explicit value in the preset itself is never silently overwritten by a
  * file it does not reference.
  */
-async function applyCompanionTemplates(
+function applyCompanionTemplates(
   profile: ProfileJson,
   name: string,
   category: ProfileCategory,
-  options: ResolveOptions,
-  index: TemplateIndex,
-): Promise<void> {
-  for (const companionName of index.get(name) ?? []) {
-    const companionPath = path.join(
-      options.bundledProfilesPath,
-      category,
-      `${companionName}.json`,
-    );
-
-    let raw: string;
-    try {
-      raw = await fs.readFile(companionPath, "utf-8");
-    } catch {
-      // Listed a moment ago, so this is a race or a permission problem
-      // rather than a missing companion. Skipping matches how the walk
-      // treats an unreadable ancestor.
-      continue;
-    }
-
-    let companion: ProfileJson;
-    try {
-      companion = JSON.parse(raw) as ProfileJson;
-    } catch (err) {
+  index: CategoryIndex,
+): void {
+  for (const companion of index.companions.get(name) ?? []) {
+    if (!companion.json) {
       // Loud, like the parent path: swallowing this would put us back to
       // slicing with a silently generic start gcode, which is the failure
       // this whole mechanism exists to prevent.
       throw new AppError(
         500,
-        `Bundled profile template is not valid JSON: "${companionName}"`,
-        `category=${category} path=${companionPath} ${err instanceof Error ? err.message : String(err)}`,
+        `Bundled profile template is not valid JSON: "${companion.baseName}"`,
+        `category=${category} path=${companion.file} ${companion.error ?? ""}`,
       );
     }
 
-    for (const [key, value] of Object.entries(companion)) {
+    for (const [key, value] of Object.entries(companion.json)) {
       if (TEMPLATE_IDENTITY_KEYS.has(key) || key in profile) {
         continue;
       }
