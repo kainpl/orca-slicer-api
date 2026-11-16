@@ -16,4 +16,7 @@
 //      "/" in a name); 422 `preset_unresolved` instead of slicing on defaults;
 //      a renamed printer keeps its stock parent; OrcaSlicer's filament
 //      library listed and resolved; ordered filament listing; this number.
-export const SIDECAR_VERSION = 1;
+//   2  A printer profile named as a stock printer preset is that stock preset
+//      (a cloud / imported copy of a 0.2 / 0.6 / 0.8 preset is no longer handed
+//      to the CLI as a user preset of its 0.4 sibling).
+export const SIDECAR_VERSION = 2;

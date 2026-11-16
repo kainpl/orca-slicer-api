@@ -205,6 +205,123 @@ describe("presets that are not renamed printers stay as they were", () => {
   });
 });
 
+// A Bambu Cloud / Orca Cloud / imported COPY of a stock preset keeps the stock
+// NAME and its real `inherits`. In the shipped tree every 0.2 / 0.6 / 0.8
+// printer inherits its 0.4 sibling and both are instantiable, so "the nearest
+// instantiable ancestor differs from my name" also holds for such a copy —
+// and it was handed to the CLI as a user preset of the 0.4 printer: a process
+// made for the 0.4 nozzle then passed the compatibility check against a 0.6
+// printer. A profile whose own name IS a stock printer's is that stock
+// printer, whatever its `inherits` and `from` say.
+describe("a copy of a stock printer under its stock name is that stock printer", () => {
+  const STOCK_06 = "Bambu Lab H2D 0.6 nozzle";
+
+  it("a user copy of the 0.6 preset is not re-parented to the 0.4 preset", async () => {
+    const result = await resolveMachine({
+      type: "machine",
+      name: STOCK_06,
+      inherits: "Bambu Lab H2D 0.4 nozzle",
+      from: "User",
+      printer_variant: "0.6",
+      nozzle_diameter: ["0.6", "0.6"],
+    });
+    expect(result.name).toBe(STOCK_06);
+    expect(result.inherits).toBeUndefined();
+    expect(result.from).toBe("system");
+    // Still flattened: the copy's own values over the chain's.
+    expect(result.printer_variant).toBe("0.6");
+    expect(result.printer_model).toBe("Bambu Lab H2D");
+    expect(result.gcode_flavor).toBe("marlin");
+  });
+
+  it("neither is a copy that says from: system", async () => {
+    const result = await resolveMachine({
+      name: STOCK_06,
+      inherits: "Bambu Lab H2D 0.4 nozzle",
+      from: "system",
+    });
+    expect(result.inherits).toBeUndefined();
+    expect(result.from).toBe("system");
+  });
+
+  it("nor a '# ' clone of it that kept the stock name", async () => {
+    const result = await resolveMachine({
+      name: `# ${STOCK_06}`,
+      inherits: "Bambu Lab H2D 0.4 nozzle",
+      from: "User",
+    });
+    expect(result.name).toBe(STOCK_06);
+    expect(result.inherits).toBeUndefined();
+    expect(result.from).toBe("system");
+  });
+
+  it("answers exactly as the stock preset picked by name does", async () => {
+    const stub = await resolveMachine({ name: STOCK_06, inherits: STOCK_06, from: "system" });
+    const copy = await resolveMachine({
+      name: STOCK_06,
+      inherits: "Bambu Lab H2D 0.4 nozzle",
+      from: "User",
+      printer_variant: "0.6",
+      nozzle_diameter: ["0.6", "0.6"],
+    });
+    expect({ name: copy.name, inherits: copy.inherits, from: copy.from }).toEqual({
+      name: stub.name,
+      inherits: stub.inherits,
+      from: stub.from,
+    });
+  });
+
+  it("a name that only an abstract base carries is not a stock printer's", async () => {
+    // `fdm_machine_common` is in the index but nobody can pick it.
+    const result = await resolveMachine({
+      name: "fdm_machine_common",
+      inherits: "Bambu Lab H2D 0.4 nozzle",
+      from: "User",
+    });
+    expect(result.inherits).toBe("Bambu Lab H2D 0.4 nozzle");
+    expect(result.from).toBe("User");
+  });
+
+  it("a genuinely renamed copy of the 0.6 preset still keeps its stock parent", async () => {
+    const result = await resolveMachine({
+      name: "Workshop H2D 0.6",
+      inherits: STOCK_06,
+      from: "User",
+    });
+    expect(result.inherits).toBe(STOCK_06);
+    expect(result.from).toBe("User");
+  });
+
+  it("a 0.4 process is not widened for a stock-named 0.6 copy", async () => {
+    const out = await materializeSliceProfiles({
+      inputDir,
+      settings: {},
+      basePath: root,
+      bundledProfilesPath: root,
+      tempProfiles: {
+        printer: Buffer.from(
+          JSON.stringify({ name: STOCK_06, inherits: "Bambu Lab H2D 0.4 nozzle", from: "User" }),
+        ),
+        preset: Buffer.from(
+          JSON.stringify({
+            name: "Made for the 0.6",
+            inherits: "0.20mm Standard @BBL H2D",
+            compatible_printers: [STOCK_06],
+          }),
+        ),
+        filaments: [],
+      },
+    });
+    const printer = JSON.parse(await fs.readFile(out.printerPath as string, "utf8")) as ProfileJson;
+    const preset = JSON.parse(await fs.readFile(out.presetPath as string, "utf8")) as ProfileJson;
+    expect(printer.name).toBe(STOCK_06);
+    expect(printer.inherits).toBeUndefined();
+    expect(printer.from).toBe("system");
+    // The CLI compares with the printer's own name; the 0.4 name is not added.
+    expect(preset.compatible_printers).toEqual([STOCK_06]);
+  });
+});
+
 describe("acceptPrinterParent", () => {
   it("adds the stock parent to a list that names the renamed printer", () => {
     const process: ProfileJson = { compatible_printers: [RENAMED] };

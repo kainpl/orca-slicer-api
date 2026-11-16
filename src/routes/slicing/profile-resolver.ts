@@ -236,11 +236,27 @@ export async function resolveProfile(
   // and its own name is the only system name it can have. Process and
   // filament presets are compared by their lists, not their names, and stay
   // flattened to `system`.
+  //
+  // "Renamed" is asked of the profile's OWN name, not of its parent: a copy of
+  // a stock preset that kept the stock name (a Bambu Cloud / Orca Cloud /
+  // imported "Bambu Lab H2D 0.6 nozzle") still carries its real `inherits`,
+  // and in the shipped tree that is the 0.4 sibling — instantiable too. Taken
+  // for a renamed printer it was handed over as a user preset of the 0.4
+  // printer, and a process made for the 0.4 nozzle passed the check against a
+  // 0.6 one. A profile named as a stock printer preset IS that preset: its
+  // own name is its system name, whatever its `inherits` and `from` said.
+  const ownName = current.name;
+  const namedAsStock =
+    typeof ownName === "string" &&
+    indexes.some(
+      (index) => index.byName.get(ownName)?.json.instantiation === "true",
+    );
   if (
     category === "machine" &&
     stockParent !== undefined &&
-    typeof current.name === "string" &&
-    current.name !== stockParent
+    typeof ownName === "string" &&
+    ownName !== stockParent &&
+    !namedAsStock
   ) {
     current.inherits = stockParent;
     current.from = "User";
