@@ -11,6 +11,7 @@ import type {
 } from "./models";
 import { Open } from "unzipper";
 import {
+  acceptPrinterParent,
   ensureProfileType,
   getDefaultBundledProfilesPath,
   normalizeFromField,
@@ -99,90 +100,16 @@ export async function sliceModel(
 
   let printerPath: string | undefined;
   let presetPath: string | undefined;
-  const filamentPaths: string[] = [];
+  let filamentPaths: string[];
 
   try {
-    // Bundle selectors take precedence over the flat-disk diskName lookup
-    // when set: settings.bundle picks the .bbscfg the rest of the names
-    // resolve against. printerName/processName/filamentName(s) are looked
-    // up in DATA_PATH/bundles/<id>/{printer,process,filament}/. The result
-    // is fed to materializeProfile via the existing diskName/diskBase path
-    // — same code path, different source root.
-    const bundlePrinter = await bundlePathOrUndefined(
-      settings.bundle,
-      "printer",
-      settings.printerName,
-    );
-    const bundleProcess = await bundlePathOrUndefined(
-      settings.bundle,
-      "process",
-      settings.processName,
-    );
-    const bundleFilamentNames = parseBundleFilamentNames(settings);
-    const bundleFilamentPaths: string[] = [];
-    for (const name of bundleFilamentNames) {
-      const p = await bundlePathOrUndefined(settings.bundle, "filament", name);
-      if (p) bundleFilamentPaths.push(p);
-    }
-
-    printerPath = await materializeProfile({
+    ({ printerPath, presetPath, filamentPaths } = await materializeSliceProfiles({
       inputDir,
-      filename: "printer.json",
-      category: "machine",
-      uploaded: tempProfiles?.printer,
-      directPath: bundlePrinter,
-      diskName: settings.printer,
-      diskBase: basePath,
-      diskCategoryDir: "printers",
+      settings,
+      tempProfiles,
+      basePath,
       bundledProfilesPath,
-    });
-    presetPath = await materializeProfile({
-      inputDir,
-      filename: "preset.json",
-      category: "process",
-      uploaded: tempProfiles?.preset,
-      directPath: bundleProcess,
-      diskName: settings.preset,
-      diskBase: basePath,
-      diskCategoryDir: "presets",
-      bundledProfilesPath,
-    });
-
-    // Resolve filaments in plate order: each upload buffer (or each
-    // comma-separated diskName, or each bundle filament path) becomes a
-    // separate filament_N.json on disk. The CLI later joins them as
-    // semicolon-separated --load-filaments arg.
-    // Four input shapes, in priority order:
-    //   1. tempProfiles.filaments[]      — N uploaded buffers
-    //   2. bundleFilamentPaths           — N paths inside a stored bundle
-    //   3. settings.filaments            — comma/semicolon-separated diskNames
-    //   4. settings.filament             — legacy single diskName
-    const uploadedFilaments = tempProfiles?.filaments ?? [];
-    const diskFilamentNames = parseDiskFilamentNames(settings);
-    const filamentSpecs: Array<{
-      uploaded?: Buffer;
-      directPath?: string;
-      diskName?: string;
-    }> =
-      uploadedFilaments.length > 0
-        ? uploadedFilaments.map((u) => ({ uploaded: u }))
-        : bundleFilamentPaths.length > 0
-        ? bundleFilamentPaths.map((p) => ({ directPath: p }))
-        : diskFilamentNames.map((n) => ({ diskName: n }));
-    for (let i = 0; i < filamentSpecs.length; i++) {
-      const p = await materializeProfile({
-        inputDir,
-        filename: `filament_${i + 1}.json`,
-        category: "filament",
-        uploaded: filamentSpecs[i].uploaded,
-        directPath: filamentSpecs[i].directPath,
-        diskName: filamentSpecs[i].diskName,
-        diskBase: basePath,
-        diskCategoryDir: "filaments",
-        bundledProfilesPath,
-      });
-      if (p) filamentPaths.push(p);
-    }
+    }));
   } catch (error) {
     await fs.rm(workdir, { recursive: true, force: true });
     throw error;
@@ -351,6 +278,133 @@ export async function sliceModel(
   }
 
   return { gcodes: resultFiles, workdir };
+}
+
+export interface SliceProfilePaths {
+  printerPath: string | undefined;
+  presetPath: string | undefined;
+  filamentPaths: string[];
+}
+
+/**
+ * Write the printer, process and filament profiles of one slice request into
+ * `inputDir`, resolved and ready for `--load-settings` / `--load-filaments`.
+ *
+ * Its own function so that what the CLI is handed can be read back without
+ * starting a slicer.
+ */
+export async function materializeSliceProfiles(args: {
+  inputDir: string;
+  settings: SlicingSettings;
+  tempProfiles?: UploadedProfiles;
+  basePath: string;
+  bundledProfilesPath: string | undefined;
+}): Promise<SliceProfilePaths> {
+  const filamentPaths: string[] = [];
+
+  // Bundle selectors take precedence over the flat-disk diskName lookup
+  // when set: settings.bundle picks the .bbscfg the rest of the names
+  // resolve against. printerName/processName/filamentName(s) are looked
+  // up in DATA_PATH/bundles/<id>/{printer,process,filament}/. The result
+  // is fed to materializeProfile via the existing diskName/diskBase path
+  // — same code path, different source root.
+  const bundlePrinter = await bundlePathOrUndefined(
+    args.settings.bundle,
+    "printer",
+    args.settings.printerName,
+  );
+  const bundleProcess = await bundlePathOrUndefined(
+    args.settings.bundle,
+    "process",
+    args.settings.processName,
+  );
+  const bundleFilamentNames = parseBundleFilamentNames(args.settings);
+  const bundleFilamentPaths: string[] = [];
+  for (const name of bundleFilamentNames) {
+    const p = await bundlePathOrUndefined(args.settings.bundle, "filament", name);
+    if (p) bundleFilamentPaths.push(p);
+  }
+
+  let renamedPrinter: RenamedPrinter | undefined;
+  const printerPath = await materializeProfile({
+    inputDir: args.inputDir,
+    filename: "printer.json",
+    category: "machine",
+    uploaded: args.tempProfiles?.printer,
+    directPath: bundlePrinter,
+    diskName: args.settings.printer,
+    diskBase: args.basePath,
+    diskCategoryDir: "printers",
+    bundledProfilesPath: args.bundledProfilesPath,
+    // A printer that comes out of the resolver still inheriting is one saved
+    // under a name of its own; the process and the filaments after it need
+    // to know which stock preset the CLI will take it for.
+    beforeWrite: (printer) => {
+      if (
+        typeof printer.name === "string" &&
+        typeof printer.inherits === "string" &&
+        printer.inherits.length > 0
+      ) {
+        renamedPrinter = { name: printer.name, stockParent: printer.inherits };
+      }
+    },
+  });
+  const acceptParent = (profile: ProfileJson) => {
+    if (renamedPrinter) {
+      acceptPrinterParent(profile, renamedPrinter.name, renamedPrinter.stockParent);
+    }
+  };
+  const presetPath = await materializeProfile({
+    inputDir: args.inputDir,
+    filename: "preset.json",
+    category: "process",
+    uploaded: args.tempProfiles?.preset,
+    directPath: bundleProcess,
+    diskName: args.settings.preset,
+    diskBase: args.basePath,
+    diskCategoryDir: "presets",
+    bundledProfilesPath: args.bundledProfilesPath,
+    beforeWrite: acceptParent,
+  });
+
+  // Resolve filaments in plate order: each upload buffer (or each
+  // comma-separated diskName, or each bundle filament path) becomes a
+  // separate filament_N.json on disk. The CLI later joins them as
+  // semicolon-separated --load-filaments arg.
+  // Four input shapes, in priority order:
+  //   1. tempProfiles.filaments[]      — N uploaded buffers
+  //   2. bundleFilamentPaths           — N paths inside a stored bundle
+  //   3. settings.filaments            — comma/semicolon-separated diskNames
+  //   4. settings.filament             — legacy single diskName
+  const uploadedFilaments = args.tempProfiles?.filaments ?? [];
+  const diskFilamentNames = parseDiskFilamentNames(args.settings);
+  const filamentSpecs: Array<{
+    uploaded?: Buffer;
+    directPath?: string;
+    diskName?: string;
+  }> =
+    uploadedFilaments.length > 0
+      ? uploadedFilaments.map((u) => ({ uploaded: u }))
+      : bundleFilamentPaths.length > 0
+      ? bundleFilamentPaths.map((p) => ({ directPath: p }))
+      : diskFilamentNames.map((n) => ({ diskName: n }));
+  for (let i = 0; i < filamentSpecs.length; i++) {
+    const p = await materializeProfile({
+      inputDir: args.inputDir,
+      filename: `filament_${i + 1}.json`,
+      category: "filament",
+      uploaded: filamentSpecs[i].uploaded,
+      directPath: filamentSpecs[i].directPath,
+      diskName: filamentSpecs[i].diskName,
+      diskBase: args.basePath,
+      diskCategoryDir: "filaments",
+      bundledProfilesPath: args.bundledProfilesPath,
+      beforeWrite: acceptParent,
+    });
+    if (p) filamentPaths.push(p);
+  }
+
+  return { printerPath, presetPath, filamentPaths };
 }
 
 /**
@@ -613,6 +667,13 @@ interface MaterializeProfileArgs {
   diskBase: string;
   diskCategoryDir: string;
   bundledProfilesPath: string | undefined;
+  // Last word on the resolved profile before it is written for the CLI.
+  beforeWrite?: (profile: ProfileJson) => void;
+}
+
+interface RenamedPrinter {
+  name: string;
+  stockParent: string;
 }
 
 async function materializeProfile(
@@ -683,6 +744,7 @@ async function materializeProfile(
 
   ensureProfileType(profile, args.category);
   normalizeFromField(profile);
+  args.beforeWrite?.(profile);
 
   const outPath = path.join(args.inputDir, args.filename);
   try {

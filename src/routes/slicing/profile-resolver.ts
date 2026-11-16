@@ -109,6 +109,9 @@ export async function resolveProfile(
   let current: ProfileJson = { ...profile };
   stripUserSentinels(current);
   let depth = 0;
+  // The nearest ancestor a user could have picked in the GUI: the stock
+  // preset this profile is a copy of, if it is one. See the end of the walk.
+  let stockParent: string | undefined;
 
   // One index for the whole walk: every ancestor is looked up by its NAME,
   // wherever in the category's tree its file sits and whatever that file is
@@ -149,6 +152,10 @@ export async function resolveProfile(
       throw presetUnresolved(category, presetName, parentName);
     }
 
+    if (stockParent === undefined && found.json.instantiation === "true") {
+      stockParent = found.name;
+    }
+
     // A copy: the index hands out the one parsed object every resolution
     // shares, and the companions below are folded into it in place.
     const parent: ProfileJson = { ...found.json };
@@ -180,6 +187,40 @@ export async function resolveProfile(
   // with the bundled compat lists.
   if (typeof current.name === "string" && current.name.startsWith("# ")) {
     current.name = current.name.slice(2);
+  }
+
+  // A printer preset saved under a name of its own.
+  //
+  // The CLI does not look a process's or a filament's `compatible_printers`
+  // up by the printer's NAME but by its "system name": the name itself when
+  // the file says `from: "system"`, otherwise its `inherits`
+  // (`new_printer_system_name` in BambuStudio.cpp / OrcaSlicer.cpp, read by
+  // the CLI_PROCESS_NOT_COMPATIBLE check and, in BambuStudio, by the filament
+  // check after it). Flattened and marked `system`, a preset called
+  // "Bambu Lab H2D 0.4 nozzle - Apply Skew Calibration" answered with that
+  // name, which no stock process lists, and every slice was refused as
+  // "printer is not compatible with the process preset" (bambuddy#3250).
+  //
+  // So such a printer leaves here the way the GUI would export it: its
+  // values flattened as always (the CLI still resolves nothing itself), plus
+  // `inherits` naming the stock preset it was copied from — the NEAREST
+  // instantiable ancestor, read off the chain, never guessed from the name —
+  // and `from: "User"`, which is what makes the CLI read that `inherits`.
+  //
+  // A stock preset picked by name, and a "# " clone that kept the stock name,
+  // are their own stock parent: nothing changes for them. Neither does it for
+  // a printer built straight on an abstract base — it has no stock parent,
+  // and its own name is the only system name it can have. Process and
+  // filament presets are compared by their lists, not their names, and stay
+  // flattened to `system`.
+  if (
+    category === "machine" &&
+    stockParent !== undefined &&
+    typeof current.name === "string" &&
+    current.name !== stockParent
+  ) {
+    current.inherits = stockParent;
+    current.from = "User";
   }
 
   return current;
@@ -289,9 +330,47 @@ export function ensureProfileType(
 // "Default" and other values are NOT remapped — those are distinct tiers
 // the CLI handles, and silently rewriting them would mask a real
 // mis-tagged file.
+//
+// A profile that still has an `inherits` after resolution is left alone: only
+// a renamed printer does (see the end of resolveProfile), and its `from:
+// "User"` is the point — it is what makes the CLI take the `inherits` as the
+// printer's system name. The CLI accepts "User" as it accepts "system".
 export function normalizeFromField(profile: ProfileJson): ProfileJson {
+  if (typeof profile.inherits === "string" && profile.inherits.length > 0) {
+    return profile;
+  }
   if (profile.from === "User" || profile.from === "System") {
     profile.from = "system";
+  }
+  return profile;
+}
+
+/**
+ * Let a process or filament preset made for a renamed printer pass the CLI's
+ * compatibility check, in place.
+ *
+ * The other half of the renamed-printer rule in resolveProfile: the CLI now
+ * compares with the printer's stock parent, so a preset whose
+ * `compatible_printers` names the renamed printer ITSELF would be refused
+ * for the opposite reason. When the list names that printer, its stock
+ * parent is added. A list that does not name it is not touched — a preset
+ * made for another printer stays refused.
+ *
+ * The list is replaced, never grown: a resolved profile shares its arrays
+ * with the cached bundled preset they came from.
+ */
+export function acceptPrinterParent(
+  profile: ProfileJson,
+  printerName: string,
+  stockParent: string,
+): ProfileJson {
+  const list = profile.compatible_printers;
+  if (
+    Array.isArray(list) &&
+    list.includes(printerName) &&
+    !list.includes(stockParent)
+  ) {
+    profile.compatible_printers = [...list, stockParent];
   }
   return profile;
 }
