@@ -747,6 +747,18 @@
               "filament_colour": {
                 "type": ["string", "null"],
                 "description": "Colour of the first extruder slot, resolved the same way. Always null across the BBL bundle -- colour is a runtime spool attribute rather than a profile one -- and populated only for third-party bundles that set it."
+              },
+              "filament_vendor": {
+                "type": ["string", "null"],
+                "description": "Brand of the filament (`filament_vendor`), resolved through the chain."
+              },
+              "filament_is_support": {
+                "type": "boolean",
+                "description": "Whether the preset is a support material. Real filaments are listed before support materials."
+              },
+              "library": {
+                "type": "boolean",
+                "description": "True for a preset of OrcaSlicer's filament library (`... @System` and the brand presets beside them) rather than of the vendor's own tree. For such an entry `compatible_printers` lists the vendor's printers it is offered for: every printer that has no preset of its own for the same filament. Always false in a Bambu Studio image, which has no library."
               }
             }
           }

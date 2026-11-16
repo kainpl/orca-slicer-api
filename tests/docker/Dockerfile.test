@@ -27,15 +27,20 @@ RUN set -eu; echo "Downloading AMD64 AppImage from OrcaSlicer/OrcaSlicer..."; \
 	./orca.AppImage --appimage-extract; \
 	rm orca.AppImage
 
-# Match production: the CLI ships .opc caches, but the API resolves JSON.
+# Match production: the CLI ships .opc caches, but the API resolves JSON —
+# the vendor's tree and, beside it, OrcaSlicer's filament library.
 RUN set -eu; \
     git clone --depth 1 --filter=blob:none --sparse --branch "v${ORCA_VERSION}" \
         https://github.com/OrcaSlicer/OrcaSlicer.git /tmp/orca-source; \
-    git -C /tmp/orca-source sparse-checkout set resources/profiles/BBL; \
+    git -C /tmp/orca-source sparse-checkout set \
+        resources/profiles/BBL resources/profiles/OrcaFilamentLibrary; \
     mkdir -p /app/bundled-profiles; \
     cp /tmp/orca-source/resources/profiles/BBL.json /app/bundled-profiles/; \
     cp -r /tmp/orca-source/resources/profiles/BBL /app/bundled-profiles/; \
+    cp /tmp/orca-source/resources/profiles/OrcaFilamentLibrary.json /app/bundled-profiles/; \
+    cp -r /tmp/orca-source/resources/profiles/OrcaFilamentLibrary /app/bundled-profiles/; \
     test -s /app/bundled-profiles/BBL/machine/fdm_machine_common.json; \
+    test -s /app/bundled-profiles/OrcaFilamentLibrary/filament/base/fdm_filament_common.json; \
     rm -rf /tmp/orca-source
 
 COPY package*.json ./

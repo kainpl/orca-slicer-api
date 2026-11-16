@@ -14,6 +14,7 @@ import {
   acceptPrinterParent,
   ensureProfileType,
   getDefaultBundledProfilesPath,
+  getFilamentLibraryPath,
   normalizeFromField,
   resolveProfile,
   type ProfileCategory,
@@ -109,6 +110,7 @@ export async function sliceModel(
       tempProfiles,
       basePath,
       bundledProfilesPath,
+      libraryProfilesPath: getFilamentLibraryPath(),
     }));
   } catch (error) {
     await fs.rm(workdir, { recursive: true, force: true });
@@ -299,6 +301,7 @@ export async function materializeSliceProfiles(args: {
   tempProfiles?: UploadedProfiles;
   basePath: string;
   bundledProfilesPath: string | undefined;
+  libraryProfilesPath?: string;
 }): Promise<SliceProfilePaths> {
   const filamentPaths: string[] = [];
 
@@ -336,6 +339,7 @@ export async function materializeSliceProfiles(args: {
     diskBase: args.basePath,
     diskCategoryDir: "printers",
     bundledProfilesPath: args.bundledProfilesPath,
+    libraryProfilesPath: args.libraryProfilesPath,
     // A printer that comes out of the resolver still inheriting is one saved
     // under a name of its own; the process and the filaments after it need
     // to know which stock preset the CLI will take it for.
@@ -364,6 +368,7 @@ export async function materializeSliceProfiles(args: {
     diskBase: args.basePath,
     diskCategoryDir: "presets",
     bundledProfilesPath: args.bundledProfilesPath,
+    libraryProfilesPath: args.libraryProfilesPath,
     beforeWrite: acceptParent,
   });
 
@@ -399,6 +404,7 @@ export async function materializeSliceProfiles(args: {
       diskBase: args.basePath,
       diskCategoryDir: "filaments",
       bundledProfilesPath: args.bundledProfilesPath,
+      libraryProfilesPath: args.libraryProfilesPath,
       beforeWrite: acceptParent,
     });
     if (p) filamentPaths.push(p);
@@ -667,6 +673,7 @@ interface MaterializeProfileArgs {
   diskBase: string;
   diskCategoryDir: string;
   bundledProfilesPath: string | undefined;
+  libraryProfilesPath?: string;
   // Last word on the resolved profile before it is written for the CLI.
   beforeWrite?: (profile: ProfileJson) => void;
 }
@@ -739,6 +746,7 @@ async function materializeProfile(
     }
     profile = await resolveProfile(profile, args.category, {
       bundledProfilesPath: args.bundledProfilesPath,
+      libraryProfilesPath: args.libraryProfilesPath,
     });
   }
 

@@ -20,14 +20,26 @@ RUN set -eu; \
 # Orca 2.5+ ships packed .opc caches instead of preset JSON. The wrapper's
 # inheritance resolver needs the JSON from the SAME release, separately from
 # the CLI's untouched cache. Sparse checkout avoids downloading other vendors.
+#
+# Two trees are taken: the vendor's (BBL) and OrcaSlicer's filament library
+# (OrcaFilamentLibrary, the "... @System" presets), which the wrapper lists
+# and resolves for printers the vendor ships no preset of that filament for.
+# The library is found as the folder BESIDE the vendor's tree, so the two
+# must stay siblings under /app/bundled-profiles. The `test -s` lines fail the
+# build if upstream moves either tree, instead of producing an image that
+# silently lists nothing.
 RUN set -eu; \
     git clone --depth 1 --filter=blob:none --sparse --branch "v${ORCA_VERSION}" \
         https://github.com/OrcaSlicer/OrcaSlicer.git /tmp/orca-source; \
-    git -C /tmp/orca-source sparse-checkout set resources/profiles/BBL; \
+    git -C /tmp/orca-source sparse-checkout set \
+        resources/profiles/BBL resources/profiles/OrcaFilamentLibrary; \
     mkdir -p /app/bundled-profiles; \
     cp /tmp/orca-source/resources/profiles/BBL.json /app/bundled-profiles/; \
     cp -r /tmp/orca-source/resources/profiles/BBL /app/bundled-profiles/; \
+    cp /tmp/orca-source/resources/profiles/OrcaFilamentLibrary.json /app/bundled-profiles/; \
+    cp -r /tmp/orca-source/resources/profiles/OrcaFilamentLibrary /app/bundled-profiles/; \
     test -s /app/bundled-profiles/BBL/machine/fdm_machine_common.json; \
+    test -s /app/bundled-profiles/OrcaFilamentLibrary/filament/base/fdm_filament_common.json; \
     rm -rf /tmp/orca-source
 
 COPY package*.json ./

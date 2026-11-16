@@ -90,6 +90,17 @@ also fetches the BBL JSON profiles from the same `v${ORCA_VERSION}` source
 tag for the API's inheritance resolver, keeping the CLI's caches intact.
 Both production and test images use this separate profile directory.
 
+Beside the BBL tree the Orca image carries OrcaSlicer's filament library
+(`OrcaFilamentLibrary`, the `... @System` presets of Elegoo, Polymaker, eSUN
+and others). `GET /profiles/bundled` lists a library filament for every BBL
+printer that has no preset of its own for that filament — the rule OrcaSlicer
+itself applies — with `"library": true` and the printers it is offered for in
+`compatible_printers`; a slice resolves it against the library's own bases.
+BambuStudio has no such library, so its image lists the BBL tree alone.
+The filament listing is ordered: real filaments before support materials,
+and within each Bambu Lab, Generic, other brands of the BBL tree, then the
+library.
+
 > **Slicing Bambu-authored 3MFs?** OrcaSlicer 2.4.2 had CLI bugs
 > that blocked slicing many Bambu-authored 3MFs — see
 > upstream [OrcaSlicer#12426](https://github.com/SoftFever/OrcaSlicer/issues/12426)
@@ -126,7 +137,8 @@ npm run dev
 `NODE_ENV` (required): Sets if run in development or production.\
 `PORT` (optional): Port to run the server on, defaults to 3000.\
 `ASYNC_SLICE_RETENTION_MS` (optional): Time in milliseconds to retain asynchronous slice jobs, defaults to 3600000 (60 minutes). Cleanup runs every 60 minutes.\
-`BUNDLED_PROFILES_PATH` (optional): Absolute path to the bundled OrcaSlicer profiles directory (e.g. `<orca>/resources/profiles/BBL`). When unset the path is derived from `ORCASLICER_PATH` (`<dirname(ORCASLICER_PATH)>/resources/profiles/BBL`). Required for profile inheritance resolution — see below.
+`BUNDLED_PROFILES_PATH` (optional): Absolute path to the bundled OrcaSlicer profiles directory (e.g. `<orca>/resources/profiles/BBL`). When unset the path is derived from `ORCASLICER_PATH` (`<dirname(ORCASLICER_PATH)>/resources/profiles/BBL`). Required for profile inheritance resolution — see below.\
+`FILAMENT_LIBRARY_PATH` (optional): Absolute path to OrcaSlicer's filament library (`<orca>/resources/profiles/OrcaFilamentLibrary`). When unset it is the `OrcaFilamentLibrary` folder beside `BUNDLED_PROFILES_PATH`; a folder that does not exist simply means no library. Set it to an empty value to switch the library off.
 
 Profiles are stored under:
 

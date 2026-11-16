@@ -4,6 +4,7 @@ import {
   loadCategoryIndex,
   lookupProfile,
   type CategoryIndex,
+  type IndexedProfile,
 } from "./profile-index";
 
 export type ProfileCategory = "machine" | "process" | "filament";
@@ -16,6 +17,9 @@ export type ProfileJson = Record<string, unknown> & {
 
 export interface ResolveOptions {
   bundledProfilesPath: string;
+  // OrcaSlicer's filament library, the tree a filament parent is looked for
+  // in when the vendor's does not have it. See getFilamentLibraryPath.
+  libraryProfilesPath?: string;
   maxDepth?: number;
 }
 
@@ -118,9 +122,19 @@ export async function resolveProfile(
   // called (see profile-index.ts). The same index lists the companions, and
   // it discovers their keys instead of hardcoding today's five, so a
   // companion for a new setting in a future bundle is picked up.
-  const index = await loadCategoryIndex(
-    path.join(options.bundledProfilesPath, category),
-  );
+  //
+  // Filaments have a second tree: OrcaSlicer's filament library, searched
+  // after the vendor's. The two share NAMES with different content — both
+  // have an `fdm_filament_pla`, 94 names in all in OrcaSlicer 2.5.0 — so the
+  // walk never goes back: once a parent was found in the library, everything
+  // above it is the library's. A vendor preset is completed from the
+  // vendor's bases, a library preset from the library's, as in the slicer.
+  const roots = [path.join(options.bundledProfilesPath, category)];
+  if (category === "filament" && options.libraryProfilesPath) {
+    roots.push(path.join(options.libraryProfilesPath, category));
+  }
+  const indexes = await Promise.all(roots.map(loadCategoryIndex));
+  let rootAt = 0;
 
   while (
     typeof current.inherits === "string" &&
@@ -135,19 +149,28 @@ export async function resolveProfile(
     }
 
     const parentName = current.inherits;
-    // Throws for a name two files claim: see the duplicate rule in
-    // profile-index.ts.
-    const found = lookupProfile(index, parentName);
+    let found: IndexedProfile | undefined;
+    for (let at = rootAt; at < indexes.length; at += 1) {
+      // Throws for a name two files claim: see the duplicate rule in
+      // profile-index.ts.
+      found = lookupProfile(indexes[at], parentName);
+      if (found) {
+        rootAt = at;
+        break;
+      }
+    }
     if (!found) {
       // A broken file cannot say what it is called, so it is recognised by
       // its file name — and reported, not passed over as a missing parent.
-      const broken = index.invalid.get(parentName);
-      if (broken) {
-        throw new AppError(
-          500,
-          `Bundled profile is not valid JSON: "${parentName}"`,
-          `category=${category} path=${path.join(index.dir, broken.rel)} ${broken.error}`,
-        );
+      for (const index of indexes.slice(rootAt)) {
+        const broken = index.invalid.get(parentName);
+        if (broken) {
+          throw new AppError(
+            500,
+            `Bundled profile is not valid JSON: "${parentName}"`,
+            `category=${category} path=${path.join(index.dir, broken.rel)} ${broken.error}`,
+          );
+        }
       }
       throw presetUnresolved(category, presetName, parentName);
     }
@@ -166,7 +189,7 @@ export async function resolveProfile(
     // provide. That ordering is what makes the generic
     // `fdm_machine_common` value lose to the model's real block, and what
     // lets a 0.6 nozzle preset inherit its 0.4 sibling's companion.
-    applyCompanionTemplates(parent, parentName, category, index);
+    applyCompanionTemplates(parent, parentName, category, indexes[rootAt]);
 
     current = mergeProfiles(parent, current);
     depth += 1;
@@ -386,6 +409,29 @@ export function mergeProfiles(
     delete merged.inherits;
   }
   return merged;
+}
+
+/** Folder name of OrcaSlicer's filament library among the vendor trees. */
+export const FILAMENT_LIBRARY_DIR = "OrcaFilamentLibrary";
+
+/**
+ * Where OrcaSlicer's filament library is, if this slicer has one.
+ *
+ * `FILAMENT_LIBRARY_PATH` when set — set to nothing, it switches the library
+ * off. Otherwise the folder beside the vendor's tree, where the slicer keeps
+ * it (`resources/profiles/OrcaFilamentLibrary` next to `…/BBL`). The folder
+ * is not checked here: one that does not exist is an empty tree to the
+ * index, which is what a Bambu Studio image has.
+ */
+export function getFilamentLibraryPath(): string | undefined {
+  const explicit = process.env.FILAMENT_LIBRARY_PATH;
+  if (explicit !== undefined) {
+    return explicit.length > 0 ? explicit : undefined;
+  }
+  const bundled = getDefaultBundledProfilesPath();
+  return bundled
+    ? path.join(path.dirname(bundled), FILAMENT_LIBRARY_DIR)
+    : undefined;
 }
 
 export function getDefaultBundledProfilesPath(): string | undefined {

@@ -17,11 +17,15 @@ import {
 import { AppError } from "../../middleware/error";
 import {
   getDefaultBundledProfilesPath,
+  getFilamentLibraryPath,
   resolveProfile,
   type ProfileCategory,
   type ProfileJson,
 } from "../slicing/profile-resolver";
-import { loadCategoryIndex } from "../slicing/profile-index";
+import {
+  loadCategoryIndex,
+  type CategoryIndex,
+} from "../slicing/profile-index";
 
 const router = Router();
 
@@ -65,8 +69,16 @@ export type BundledFilament = BundledCompatEntry & {
   // stays in the response for third-party bundles that do set it.
   filament_type: string | null;
   filament_colour: string | null;
+  // The brand (`filament_vendor`) and whether this is a support material,
+  // both resolved through the chain. They decide the listing's order.
+  filament_vendor: string | null;
+  filament_is_support: boolean;
+  // True for a preset of OrcaSlicer's filament library rather than of the
+  // vendor's own tree. For such an entry `compatible_printers` is the list of
+  // the vendor's printers it is OFFERED for — see libraryFilaments.
+  library: boolean;
 };
-type BundledIndex = {
+export type BundledIndex = {
   printer: BundledEntry[];
   process: BundledCompatEntry[];
   filament: BundledFilament[];
@@ -92,21 +104,191 @@ router.get("/bundled", async (_req, res) => {
     return;
   }
 
-  const result: BundledIndex = {
+  const result = await buildBundledListing(bundledPath, getFilamentLibraryPath());
+  bundledIndexCache = result;
+  bundledIndexCachedAt = now;
+  res.status(200).json(result);
+});
+
+/**
+ * The whole "Standard" listing: the vendor's printers, processes and
+ * filaments, and — where the slicer has one — the filaments of OrcaSlicer's
+ * library that the vendor's printers can use.
+ */
+export async function buildBundledListing(
+  bundledPath: string,
+  libraryPath: string | undefined,
+): Promise<BundledIndex> {
+  const filament = (await readBundledDir(
+    path.join(bundledPath, "filament"),
+    "filament",
+  )) as BundledFilament[];
+  if (libraryPath) {
+    filament.push(...(await libraryFilaments(bundledPath, libraryPath)));
+    filament.sort(compareFilaments);
+  }
+  return {
     printer: await readBundledDir(path.join(bundledPath, "machine"), "printer"),
     process: (await readBundledDir(
       path.join(bundledPath, "process"),
       "process",
     )) as BundledCompatEntry[],
-    filament: (await readBundledDir(
-      path.join(bundledPath, "filament"),
-      "filament",
-    )) as BundledFilament[],
+    filament,
   };
-  bundledIndexCache = result;
-  bundledIndexCachedAt = now;
-  res.status(200).json(result);
-});
+}
+
+/**
+ * The library's filaments the vendor's printers can use, each with the
+ * printers it is offered for.
+ *
+ * The rule is OrcaSlicer's own (`update_library_profile_excluded_from` and
+ * `is_compatible_with_printer` in Preset.cpp): a library preset is offered
+ * for a printer unless that printer has its own preset of the same filament.
+ *
+ *   - A library preset that names printers (`Polymaker PolyLite PLA @BBL A1`)
+ *     is an ordinary printer-specific preset that happens to live in the
+ *     library: listed with its own list, and only when that list names one of
+ *     this vendor's printers.
+ *   - A library preset that names none (`Generic PLA @System`) is the generic
+ *     one. It is offered for every printer of the vendor EXCEPT those some
+ *     printer-specific preset of the same filament names — whether that
+ *     preset is the vendor's (`Generic PLA @BBL X1C`) or the library's. "The
+ *     same filament" is the alias: the name up to its "@".
+ *   - A name the vendor's tree has too is the vendor's preset; the library's
+ *     file of that name is not listed (and not what the name resolves to).
+ *
+ * The answer for a generic preset is spelled out as a list of printers
+ * rather than left empty, so a consumer applies one rule — "listed means
+ * offered" — to every entry and does not have to know this one.
+ */
+async function libraryFilaments(
+  bundledPath: string,
+  libraryPath: string,
+): Promise<BundledFilament[]> {
+  const library = await loadCategoryIndex(path.join(libraryPath, "filament"));
+  if (library.byName.size === 0) return [];
+  const vendor = await loadCategoryIndex(path.join(bundledPath, "filament"));
+  const machines = await loadCategoryIndex(path.join(bundledPath, "machine"));
+
+  // Sorted: these become the generic presets' lists.
+  const printers = [...machines.byName.values()]
+    .filter((p) => p.json.instantiation === "true")
+    .map((p) => p.name)
+    .sort((a, b) => a.localeCompare(b));
+  const isVendorPrinter = new Set(printers);
+
+  const vendorByName = profilesByName(vendor);
+  const libraryByName = profilesByName(library);
+
+  // Filament alias -> the printers that have a preset of their own for it.
+  const covered = new Map<string, Set<string>>();
+  for (const byName of [vendorByName, libraryByName]) {
+    for (const json of byName.values()) {
+      if (!isInstantiable(json)) continue;
+      const named = stringList(inheritedField(byName, json, "compatible_printers"));
+      if (!named) continue;
+      const alias = filamentAlias(json);
+      let set = covered.get(alias);
+      if (!set) covered.set(alias, (set = new Set()));
+      for (const printer of named) set.add(printer);
+    }
+  }
+
+  const out: BundledFilament[] = [];
+  for (const [name, json] of libraryByName) {
+    if (!isInstantiable(json) || !json.name) continue;
+    if (vendor.byName.has(name) || vendor.ambiguous.has(name)) continue;
+
+    const own = stringList(
+      inheritedField(libraryByName, json, "compatible_printers"),
+    );
+    let offered: string[];
+    if (own) {
+      if (!own.some((printer) => isVendorPrinter.has(printer))) continue;
+      offered = own;
+    } else {
+      const taken = covered.get(filamentAlias(json));
+      offered = printers.filter((printer) => !taken?.has(printer));
+      if (offered.length === 0) continue;
+    }
+    out.push({
+      ...filamentEntry(libraryByName, json, true),
+      compatible_printers: offered,
+    });
+  }
+  return out;
+}
+
+function profilesByName(index: CategoryIndex): Map<string, BundledProfile> {
+  const byName = new Map<string, BundledProfile>();
+  for (const [name, entry] of index.byName) {
+    byName.set(name, entry.json);
+  }
+  return byName;
+}
+
+// Bundled profiles ship a mix of concrete presets and abstract bases (e.g.
+// `fdm_filament_pla`). `instantiation:"true"` is the BBL convention for "this
+// is a leaf preset"; a file that says nothing counts as one.
+function isInstantiable(json: BundledProfile): boolean {
+  return !json.instantiation || json.instantiation === "true";
+}
+
+// OrcaSlicer's "logical name" of a preset: its `alias` when the file states
+// one, else the name up to the first "@" (PresetBundle.cpp). A name without
+// an "@" is its own alias — the slicer leaves that alias empty, which would
+// make every such preset "the same filament" as every other.
+function filamentAlias(json: BundledProfile): string {
+  if (typeof json.alias === "string" && json.alias.length > 0) return json.alias;
+  const name = json.name ?? "";
+  const at = name.indexOf("@");
+  return at >= 0 ? name.slice(0, at).trimEnd() : name;
+}
+
+function filamentEntry(
+  byName: Map<string, BundledProfile>,
+  json: BundledProfile,
+  library: boolean,
+): BundledFilament {
+  const scalar = (key: string) =>
+    firstScalar(
+      inheritedField(byName, json, key) as string | string[] | undefined,
+    );
+  return {
+    name: json.name as string,
+    base_id: json.inherits ?? null,
+    compatible_printers: stringList(
+      inheritedField(byName, json, "compatible_printers"),
+    ),
+    filament_type: scalar("filament_type"),
+    filament_colour: scalar("filament_colour"),
+    filament_vendor: scalar("filament_vendor"),
+    filament_is_support: scalar("filament_is_support") === "1",
+    library,
+  };
+}
+
+// The order of the filament listing. A consumer that has to pick one preset
+// among equals takes the first, so what comes first matters: a real filament
+// before a support material of the same type ("Bambu Support For PA/PET"
+// sorts ahead of "Generic PA" by name), the vendor's own presets before the
+// library's, and among the vendor's, Bambu Lab's before the generics before
+// other brands. Names decide the rest, so the order is the same on every
+// request.
+function filamentRank(entry: BundledFilament): number {
+  const tier = entry.library
+    ? 3
+    : entry.filament_vendor === "Bambu Lab"
+      ? 0
+      : entry.filament_vendor === "Generic"
+        ? 1
+        : 2;
+  return (entry.filament_is_support ? 4 : 0) + tier;
+}
+
+function compareFilaments(a: BundledFilament, b: BundledFilament): number {
+  return filamentRank(a) - filamentRank(b) || a.name.localeCompare(b.name);
+}
 
 /**
  * List one category directory of a bundled-profile tree, subfolders included.
@@ -131,19 +313,13 @@ export async function readBundledDir(
   // the user, but they are where the inherited fields actually live, so the
   // walk below needs them in hand. A corrupted or unreadable file is simply
   // not in the index and does not break the rest of the listing.
-  const index = await loadCategoryIndex(dir);
-  const byName = new Map<string, BundledProfile>();
-  for (const [name, entry] of index.byName) {
-    byName.set(name, entry.json);
-  }
+  const byName = profilesByName(await loadCategoryIndex(dir));
 
   const out: BundledEntry[] = [];
   for (const json of byName.values()) {
-    // Bundled profiles ship a mix of concrete presets and abstract bases
-    // (e.g. `fdm_filament_pla`). Skip the latter so the slicer modal only
-    // offers things a user can actually pick. `instantiation:"true"` is the
-    // BBL convention for "this is a leaf preset".
-    if (json.instantiation && json.instantiation !== "true") continue;
+    // Skip the abstract bases so the slicer modal only offers things a user
+    // can actually pick.
+    if (!isInstantiable(json)) continue;
     if (!json.name) continue;
     const base: BundledEntry = { name: json.name, base_id: json.inherits ?? null };
     if (kind === "printer") {
@@ -160,25 +336,14 @@ export async function readBundledDir(
       out.push(compat);
       continue;
     }
-    const filament: BundledFilament = {
-      ...compat,
-      filament_type: firstScalar(
-        inheritedField(byName, json, "filament_type") as
-          | string
-          | string[]
-          | undefined,
-      ),
-      filament_colour: firstScalar(
-        inheritedField(byName, json, "filament_colour") as
-          | string
-          | string[]
-          | undefined,
-      ),
-    };
-    out.push(filament);
+    out.push(filamentEntry(byName, json, false));
   }
-  // Stable alphabetical order by name so the dropdown is predictable.
-  out.sort((a, b) => a.name.localeCompare(b.name));
+  if (kind === "filament") {
+    (out as BundledFilament[]).sort(compareFilaments);
+  } else {
+    // Stable alphabetical order by name so the dropdown is predictable.
+    out.sort((a, b) => a.name.localeCompare(b.name));
+  }
   return out;
 }
 
@@ -341,7 +506,7 @@ router.post("/resolve", async (req, res) => {
   const resolved = await resolveProfile(
     profile as ProfileJson,
     category as ProfileCategory,
-    { bundledProfilesPath },
+    { bundledProfilesPath, libraryProfilesPath: getFilamentLibraryPath() },
   );
 
   res.status(200).json({ profile: resolved });
