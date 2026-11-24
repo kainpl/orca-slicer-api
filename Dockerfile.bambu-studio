@@ -47,6 +47,7 @@ RUN set -eu; if [ "$TARGETARCH" = "arm64" ]; then \
     curl -fL -o bambu.AppImage "$BAMBU_URL"; \
     chmod +x bambu.AppImage; \
     ./bambu.AppImage --appimage-extract; \
+    chmod -R a+rX squashfs-root; \
     rm bambu.AppImage
 
 COPY package*.json ./

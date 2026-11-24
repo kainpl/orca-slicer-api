@@ -151,6 +151,14 @@ Profiles are stored under:
 
 Each profile is a JSON file from OrcaSlicer.
 
+### Unprivileged Docker users
+
+The build makes the extracted slicer runnable by an unprivileged UID.
+To opt in, run either freshly built image with `--user 10001:10001`
+and `--env HOME=/app/data`. Choose a UID and GID that can write to the
+mounted `/app/data` directory and its existing files. The image retains
+its default Docker user unless the operator sets one.
+
 ## Profile inheritance resolution
 
 OrcaSlicer / BambuStudio user exports inherit from user-facing preset names like `"Bambu Lab X1 Carbon 0.4 nozzle"`, and they carry a handful of GUI-only quirks that trip up the CLI:

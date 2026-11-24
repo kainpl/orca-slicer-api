@@ -15,6 +15,7 @@ RUN set -eu; \
     curl -fL -o orca.AppImage "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404${ARCH_SUFFIX}_V${ORCA_VERSION}.AppImage"; \
     chmod +x orca.AppImage; \
     ./orca.AppImage --appimage-extract; \
+    chmod -R a+rX squashfs-root; \
     rm orca.AppImage
 
 # Orca 2.5+ ships packed .opc caches instead of preset JSON. The wrapper's
